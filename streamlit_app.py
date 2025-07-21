@@ -74,6 +74,22 @@ if client:
     user_input = st.sidebar.chat_input("Haz una pregunta")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=st.session_state.messages
+            )
+            bot_msg = response.choices[0].message.content
+        except Exception as e:
+            bot_msg = "⚠️ Rate limit alcanzado o error de API. Por favor, inténtalo de nuevo más tarde."
+        st.session_state.messages.append({"role": "assistant", "content": bot_msg})
+    for msg in st.session_state.messages:
+        st.sidebar.chat_message(msg['role'], msg['content'])
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    user_input = st.sidebar.chat_input("Haz una pregunta")
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
         # Llamada al nuevo cliente OpenAI
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
