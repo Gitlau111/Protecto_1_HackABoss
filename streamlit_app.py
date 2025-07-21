@@ -5,8 +5,6 @@ import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-# OpenAI v1+ client
-from openai import OpenAI
 
 # Configuración de la página
 st.set_page_config(
@@ -14,14 +12,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# Cargar clave API de OpenAI desde secretos
-oai_key = st.secrets.get("openai_api_key", None)
-client = None
-if not oai_key:
-    st.warning("🔑 No se encontró la clave de OpenAI. Agrega 'openai_api_key' a Streamlit secrets.")
-else:
-    client = OpenAI(api_key=oai_key)
 
 # Funciones de ETL
 @st.cache_data(show_spinner=False)
@@ -41,82 +31,55 @@ def transformar(datos):
 
 # Comentarios para cada análisis
 comments = {
-    "Gráficos acumulados": "Evolución acumulada de muertes e hospitalizaciones a lo largo del tiempo.",
-    "Promedios 7 días": "Promedio móvil de 7 días para suavizar fluctuaciones diarias.",
-    "Promedios 30 días": "Promedio móvil de 30 días para tendencias más estables.",
-    "Serie diarios casos vs muertes": "Comparación de casos y muertes diarias para ver retrasos en la mortalidad.",
-    "Mapa de calor correlación": "Correlación entre casos diarios y muertes diarias.",
-    "Estadísticas descriptivas": "Medidas de tendencia central y dispersión de las variables.",
-    "Distribución antes/después vacunación": "Comparativa de distribución de casos diarios antes y después de la vacunación.",
-    "Aceleración casos diarios": "Segunda derivada para identificar aceleraciones en la transmisión.",
-    "Probabilidad hospitalización": "Probabilidad de hospitalización dado un caso positivo.",
-    "Tasa de positividad": "Porcentaje de tests positivos sobre el total de tests realizados diariamente."
+    "Gráficos acumulados": "Aquí mostramos la evolución acumulada de muertes e hospitalizaciones para observar tendencias a largo plazo.",
+    "Promedios 7 días": "Promedio móvil de 7 días para suavizar la variabilidad diaria. Útil para identificar picos.",
+    "Promedios 30 días": "Promedio móvil de 30 días para ver tendencias más estables y comparar con la curva de 7 días.",
+    "Serie diarios casos vs muertes": "Comparación directa de casos y muertes diarias para ver retrasos en la mortalidad.",
+    "Mapa de calor correlación": "Coeficiente de correlación muestra la relación entre casos diarios y muertes.",
+    "Estadísticas descriptivas": "Tabla resumen con medidas como media, mediana y percentiles de las variables.",
+    "Distribución antes/después vacunación": "Analizamos cómo cambió el número de casos diarios tras inicio de vacunación (14/12/2020).",
+    "Aceleración casos diarios": "Segunda derivada para detectar aceleraciones o desaceleraciones en la transmisión.",
+    "Probabilidad hospitalización": "Probabilidad de hospitalización dado un caso positivo (diaria vs acumulada).",
+    "Tasa de positividad": "Porcentaje de tests positivos sobre el total de tests realizados cada día."
 }
 
-# API endpoint
+# URL de la API
 target_url = "https://api.covidtracking.com/v1/us/daily.json"
 
-# Sidebar: controles ETL & Visualización
-st.sidebar.header("🔧 Parámetros ETL & Visualización")
+# Sidebar: controles\st.sidebar.header("🔧 Parámetros ETL & Visualización")
+
 earliest = datetime(2020, 3, 1)
 latest = datetime.today()
-fecha_inicio = st.sidebar.date_input("Fecha inicio", value=earliest, min_value=earliest, max_value=latest)
-fecha_fin = st.sidebar.date_input("Fecha fin", value=latest,    min_value=earliest, max_value=latest)
+fecha_inicio = st.sidebar.date_input(
+    "Fecha inicio", value=earliest, min_value=earliest, max_value=latest
+)
+fecha_fin = st.sidebar.date_input(
+    "Fecha fin", value=latest, min_value=earliest, max_value=latest
+)
 
 dashboard_ops = list(comments.keys())
-seleccion = st.sidebar.multiselect("Elige análisis", dashboard_ops, default=[dashboard_ops[0]])
-
-# Chatbot en sidebar
-st.sidebar.header("💬 Chat COVID-19 ETL")
-if client:
-    if 'messages' not in st.session_state:
-        st.session_state.messages = []
-    user_input = st.sidebar.chat_input("Haz una pregunta")
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=st.session_state.messages
-            )
-            bot_msg = response.choices[0].message.content
-        except Exception as e:
-            bot_msg = "⚠️ Rate limit alcanzado o error de API. Por favor, inténtalo de nuevo más tarde."
-        st.session_state.messages.append({"role": "assistant", "content": bot_msg})
-    for msg in st.session_state.messages:
-        st.sidebar.chat_message(msg['role'], msg['content'])
-    if 'messages' not in st.session_state:
-        st.session_state.messages = []
-    user_input = st.sidebar.chat_input("Haz una pregunta")
-    if user_input:
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        # Llamada al nuevo cliente OpenAI
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=st.session_state.messages
-        )
-        bot_msg = response.choices[0].message.content
-        st.session_state.messages.append({"role": "assistant", "content": bot_msg})
-    for msg in st.session_state.messages:
-        st.sidebar.chat_message(msg['role'], msg['content'])
-else:
-    st.sidebar.info("🔒 Chat desactivado. Proporciona OpenAI API key.")
+seleccion = st.sidebar.multiselect(
+    "Elige análisis", dashboard_ops, default=[dashboard_ops[0]]
+)
 
 # Carga de datos
 if st.sidebar.button("🔄 Cargar datos"):
     raw = importar_datos(target_url)
     df = transformar(raw)
-    mask = (df['date'] >= pd.to_datetime(fecha_inicio)) & (df['date'] <= pd.to_datetime(fecha_fin))
+    mask = (
+        (df['date'] >= pd.to_datetime(fecha_inicio)) &
+        (df['date'] <= pd.to_datetime(fecha_fin))
+    )
     df = df.loc[mask].reset_index(drop=True)
     st.session_state['df'] = df
-    st.sidebar.success(f"{len(df)} registros cargados.")
+    st.sidebar.success(f"{len(df)} registros cargados")
 
-# Main: mostrar análisis
-st.title("📊 Dashboard ETL COVID-19 (EEUU)")
+# Mostrar resultados
 if 'df' in st.session_state:
     df = st.session_state['df']
     for op in seleccion:
         st.markdown(f"### {op}")
+        # Generar cada gráfico según op
         if op == "Gráficos acumulados":
             fig, ax = plt.subplots(figsize=(12,4))
             ax.plot(df['date'], df['death'], label="Muertes acumuladas")
@@ -173,10 +136,8 @@ if 'df' in st.session_state:
             st.pyplot(fig)
         elif op == "Tasa de positividad":
             df['positivity_rate'] = df['positive'] / (df['positive']+df['negative'])
-            mean_rate = df['positivity_rate'].mean()
-            st.write(f"Promedio tasa de positividad: {mean_rate:.3f}")
-        # Comentario
-        st.markdown(f"**Comentario:** {comments.get(op, '')}")
+            st.write(df['positivity_rate'].describe())
+        # Mostrar comentario\        st.markdown(f"**Comentario:** {comments.get(op, '')}")
     # Descarga de datos
     st.markdown("---")
     csv = df.to_csv(index=False).encode('utf-8')
