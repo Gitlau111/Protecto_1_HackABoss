@@ -5,7 +5,8 @@ import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
-import openai
+# OpenAI v1+ client
+from openai import OpenAI
 
 # Configuración de la página
 st.set_page_config(
@@ -16,10 +17,11 @@ st.set_page_config(
 
 # Cargar clave API de OpenAI desde secretos
 oai_key = st.secrets.get("openai_api_key", None)
+client = None
 if not oai_key:
     st.warning("🔑 No se encontró la clave de OpenAI. Agrega 'openai_api_key' a Streamlit secrets.")
 else:
-    openai.api_key = oai_key
+    client = OpenAI(api_key=oai_key)
 
 # Funciones de ETL
 @st.cache_data(show_spinner=False)
@@ -39,24 +41,23 @@ def transformar(datos):
 
 # Comentarios para cada análisis
 comments = {
-    "Gráficos acumulados": "Aquí mostramos la evolución acumulada de muertes e hospitalizaciones para observar tendencias a largo plazo.",
-    "Promedios 7 días": "Promedio móvil de 7 días para suavizar la variabilidad diaria. Útil para identificar picos.",
-    "Promedios 30 días": "Promedio móvil de 30 días para ver tendencias más estables y comparar con la curva de 7 días.",
-    "Serie diarios casos vs muertes": "Comparación directa de casos y muertes diarias para ver retrasos en la mortalidad.",
-    "Mapa de calor correlación": "Coeficiente de correlación muestra la relación entre casos diarios y muertes.",
-    "Estadísticas descriptivas": "Tabla resumen con medidas como media, mediana y percentiles de las variables.",
-    "Distribución antes/después vacunación": "Analizamos cómo cambió el número de casos diarios tras inicio de vacunación (14/12/2020).",
-    "Aceleración casos diarios": "Segunda derivada para detectar aceleraciones o desaceleraciones en la transmisión.",
-    "Probabilidad hospitalización": "Probabilidad de hospitalización dado un caso positivo (diaria vs acumulada).",
-    "Tasa de positividad": "Porcentaje de tests positivos sobre el total de tests realizados cada día."
+    "Gráficos acumulados": "Evolución acumulada de muertes e hospitalizaciones a lo largo del tiempo.",
+    "Promedios 7 días": "Promedio móvil de 7 días para suavizar fluctuaciones diarias.",
+    "Promedios 30 días": "Promedio móvil de 30 días para tendencias más estables.",
+    "Serie diarios casos vs muertes": "Comparación de casos y muertes diarias para ver retrasos en la mortalidad.",
+    "Mapa de calor correlación": "Correlación entre casos diarios y muertes diarias.",
+    "Estadísticas descriptivas": "Medidas de tendencia central y dispersión de las variables.",
+    "Distribución antes/después vacunación": "Comparativa de distribución de casos diarios antes y después de la vacunación.",
+    "Aceleración casos diarios": "Segunda derivada para identificar aceleraciones en la transmisión.",
+    "Probabilidad hospitalización": "Probabilidad de hospitalización dado un caso positivo.",
+    "Tasa de positividad": "Porcentaje de tests positivos sobre el total de tests realizados diariamente."
 }
 
-# URL de la API
+# API endpoint
 target_url = "https://api.covidtracking.com/v1/us/daily.json"
 
-# Sidebar: Controles ETL y Visualización
+# Sidebar: controles ETL & Visualización
 st.sidebar.header("🔧 Parámetros ETL & Visualización")
-
 earliest = datetime(2020, 3, 1)
 latest = datetime.today()
 fecha_inicio = st.sidebar.date_input("Fecha inicio", value=earliest, min_value=earliest, max_value=latest)
@@ -65,25 +66,27 @@ fecha_fin = st.sidebar.date_input("Fecha fin", value=latest,    min_value=earlie
 dashboard_ops = list(comments.keys())
 seleccion = st.sidebar.multiselect("Elige análisis", dashboard_ops, default=[dashboard_ops[0]])
 
-# Chatbot en sidebar\st.sidebar.header("💬 Chat COVID-19")
-if oai_key:
+# Chatbot en sidebar
+st.sidebar.header("💬 Chat COVID-19 ETL")
+if client:
     if 'messages' not in st.session_state:
         st.session_state.messages = []
-    user_input = st.sidebar.chat_input("Pregunta sobre COVID-19 ETL")
+    user_input = st.sidebar.chat_input("Haz una pregunta")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-        response = openai.ChatCompletion.create(
+        # Llamada al nuevo cliente OpenAI
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=st.session_state.messages
         )
-        bot_msg = response.choices[0].message
-        st.session_state.messages.append({"role": bot_msg.role, "content": bot_msg.content})
+        bot_msg = response.choices[0].message.content
+        st.session_state.messages.append({"role": "assistant", "content": bot_msg})
     for msg in st.session_state.messages:
         st.sidebar.chat_message(msg['role'], msg['content'])
 else:
-    st.sidebar.info("🔒 Chat desactivado: falta API key.")
+    st.sidebar.info("🔒 Chat desactivado. Proporciona OpenAI API key.")
 
-# Botón de carga de datos
+# Carga de datos
 if st.sidebar.button("🔄 Cargar datos"):
     raw = importar_datos(target_url)
     df = transformar(raw)
@@ -111,8 +114,52 @@ if 'df' in st.session_state:
             ax.bar(df7.index + pd.Timedelta(days=3), df7['daily_deaths'], width=6, label="Muertes 7d")
             ax.legend(); ax.set_xlabel("Periodo"); ax.set_ylabel("Promedio diario")
             st.pyplot(fig)
-        # ... restantes análisis como antes ...
-        # Finalmente mostrar comentario
+        elif op == "Promedios 30 días":
+            df30 = df.resample('30D', on='date')[['daily_cases','daily_deaths']].mean().dropna()
+            fig, ax = plt.subplots(figsize=(12,4))
+            ax.bar(df30.index - pd.Timedelta(days=15), df30['daily_cases'], width=20, label="Casos 30d")
+            ax.bar(df30.index + pd.Timedelta(days=15), df30['daily_deaths'], width=20, label="Muertes 30d")
+            ax.legend(); ax.set_xlabel("Periodo"); ax.set_ylabel("Promedio diario")
+            st.pyplot(fig)
+        elif op == "Serie diarios casos vs muertes":
+            fig, ax = plt.subplots(figsize=(12,4))
+            ax.plot(df['date'], df['daily_cases'], label="Casos diarios")
+            ax.plot(df['date'], df['daily_deaths'], label="Muertes diarias")
+            ax.legend(); ax.set_xlabel("Fecha"); ax.set_ylabel("Cantidad")
+            st.pyplot(fig)
+        elif op == "Mapa de calor correlación":
+            corr = df[['daily_cases','daily_deaths']].corr()
+            fig, ax = plt.subplots(figsize=(4,4))
+            sns.heatmap(corr, annot=True, vmin=-1, vmax=1, ax=ax)
+            st.pyplot(fig)
+        elif op == "Estadísticas descriptivas":
+            st.dataframe(df.describe().T)
+        elif op == "Distribución antes/después vacunación":
+            fecha_vac = pd.Timestamp("2020-12-14")
+            df['period'] = np.where(df['date'] < fecha_vac, 'Antes', 'Después')
+            fig, ax = plt.subplots(figsize=(12,4))
+            sns.histplot(data=df, x='daily_cases', hue='period', multiple='dodge', bins=30, ax=ax)
+            st.pyplot(fig)
+        elif op == "Aceleración casos diarios":
+            df['acceleration'] = df['daily_cases'].diff().diff()
+            fig, ax = plt.subplots(figsize=(12,4))
+            ax.plot(df['date'], df['acceleration'])
+            ax.axhline(0, linestyle='--', color='gray')
+            st.pyplot(fig)
+        elif op == "Probabilidad hospitalización":
+            df['prob_hosp_daily'] = df['hospitalizedCurrently'] / df['daily_cases'].replace(0, np.nan)
+            df['prob_hosp_acum'] = df['hospitalizedCumulative'] / df['positive'].replace(0, np.nan)
+            mean_daily = df['prob_hosp_daily'].mean()
+            mean_acum = df['prob_hosp_acum'].mean()
+            fig, ax = plt.subplots(figsize=(6,4))
+            ax.bar(['Diaria','Acumulada'], [mean_daily, mean_acum])
+            for i,v in enumerate([mean_daily, mean_acum]): ax.text(i, v+0.005, f"{v:.3f}", ha='center')
+            st.pyplot(fig)
+        elif op == "Tasa de positividad":
+            df['positivity_rate'] = df['positive'] / (df['positive']+df['negative'])
+            mean_rate = df['positivity_rate'].mean()
+            st.write(f"Promedio tasa de positividad: {mean_rate:.3f}")
+        # Comentario
         st.markdown(f"**Comentario:** {comments.get(op, '')}")
     # Descarga de datos
     st.markdown("---")
